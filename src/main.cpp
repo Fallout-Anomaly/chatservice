@@ -8,6 +8,8 @@ std::string serverUrl = "wss://fallenworld.nexus/ws";
 std::string username = "Player";
 bool g_privacyAccepted = false;
 uint64_t g_steamID = 0;
+bool g_chatEnabled = true;
+bool g_tutorialSeen = false;
 
 uint64_t FetchSteamID()
 {
@@ -55,6 +57,25 @@ void SavePrivacyPolicy()
 	ini.SetBoolValue("General", "privacy_accepted", true);
 	ini.SaveFile("Data\\F4SE\\Plugins\\FalloutChat.ini");
 	g_privacyAccepted = true;
+	ini.Reset();
+}
+
+void SaveChatEnabled(bool enabled)
+{
+	g_chatEnabled = enabled;
+	ini.LoadFile("Data\\F4SE\\Plugins\\FalloutChat.ini");
+	ini.SetBoolValue("General", "chat_enabled", enabled);
+	ini.SaveFile("Data\\F4SE\\Plugins\\FalloutChat.ini");
+	ini.Reset();
+}
+
+void SaveTutorialSeen()
+{
+	ini.LoadFile("Data\\F4SE\\Plugins\\FalloutChat.ini");
+	ini.SetBoolValue("General", "tutorial_seen", true);
+	ini.SaveFile("Data\\F4SE\\Plugins\\FalloutChat.ini");
+	g_tutorialSeen = true;
+	ini.Reset();
 }
 
 void LoadConfigs()
@@ -68,6 +89,8 @@ void LoadConfigs()
 		username = "Player";
 
 	g_privacyAccepted = ini.GetBoolValue("General", "privacy_accepted", false);
+	g_chatEnabled = ini.GetBoolValue("General", "chat_enabled", true);
+	g_tutorialSeen = ini.GetBoolValue("General", "tutorial_seen", false);
 	ini.Reset();
 }
 

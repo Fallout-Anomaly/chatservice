@@ -23,6 +23,10 @@ extern void SavePrivacyPolicy();
 extern void SaveUsername(const std::string& newName);
 extern uint64_t g_steamID;
 extern uint64_t FetchSteamID();
+extern bool g_chatEnabled;
+extern void SaveChatEnabled(bool enabled);
+extern bool g_tutorialSeen;
+extern void SaveTutorialSeen();
 
 namespace FalloutChat
 {
@@ -82,6 +86,140 @@ namespace FalloutChat
 		static constexpr float PASSIVE_FADE_OUT = 1.5f;
 		static float s_passiveHoldTime = 5.0f;
 		static float s_passiveMaxAlpha = 0.85f;
+
+		static const char* kTickerMessages[] = {
+			"WELCOME TO FALLOUT 4 GLOBAL CHAT",
+			"MADE WITH LOVE FROM FALLEN WORLD TEAM"
+		};
+		static constexpr int   kTickerCount = 2;
+		static constexpr float kTickerSpeed = 80.0f;
+
+		static int    s_tutorialStep = -1;        // -1=off, 1-4=active step, 5=finish
+		static bool   s_tutorialForceSettings = false;
+		static ImVec2 s_gearRectMin{};
+		static ImVec2 s_gearRectMax{};
+		static ImVec2 s_enableChatRectMin{};
+		static ImVec2 s_enableChatRectMax{};
+		static ImVec2 s_settingsPopupRectMin{};
+		static ImVec2 s_settingsPopupRectMax{};
+
+		static void DrawTutorialOverlay()
+		{
+			if (s_tutorialStep < 1 || s_tutorialStep > 4)
+				return;
+
+			ImGuiIO& io     = ImGui::GetIO();
+			ImVec2 dispSize = io.DisplaySize;
+
+			// Use foreground draw list — always renders above all windows
+			ImDrawList* dl = ImGui::GetForegroundDrawList();
+
+			// Determine spotlight rect
+			ImVec2 spotMin{}, spotMax{};
+			bool hasSpot = false;
+			if (s_tutorialStep == 2 && s_gearRectMax.x > 0) {
+				spotMin = ImVec2(s_gearRectMin.x - 6, s_gearRectMin.y - 6);
+				spotMax = ImVec2(s_gearRectMax.x + 6, s_gearRectMax.y + 6);
+				hasSpot = true;
+			} else if (s_tutorialStep == 3 && s_settingsPopupRectMax.x > 0) {
+				// spotlight the whole settings popup so its content stays visible
+				spotMin = ImVec2(s_settingsPopupRectMin.x - 4, s_settingsPopupRectMin.y - 4);
+				spotMax = ImVec2(s_settingsPopupRectMax.x + 4, s_settingsPopupRectMax.y + 4);
+				hasSpot = true;
+			}
+
+			if (hasSpot) {
+				// Dim the four regions around the spotlight cutout instead of the whole screen
+				dl->AddRectFilled(ImVec2(0, 0),                          ImVec2(dispSize.x, spotMin.y), IM_COL32(0, 0, 0, 180));
+				dl->AddRectFilled(ImVec2(0, spotMax.y),                  dispSize,                      IM_COL32(0, 0, 0, 180));
+				dl->AddRectFilled(ImVec2(0, spotMin.y),                  ImVec2(spotMin.x, spotMax.y),  IM_COL32(0, 0, 0, 180));
+				dl->AddRectFilled(ImVec2(spotMax.x, spotMin.y),          ImVec2(dispSize.x, spotMax.y), IM_COL32(0, 0, 0, 180));
+				// Green border around spotlight
+				dl->AddRect(spotMin, spotMax, IM_COL32(0, 255, 80, 255), 4.0f, 0, 3.0f);
+				// For step 3, also highlight the checkbox inside the popup
+				if (s_tutorialStep == 3 && s_enableChatRectMax.x > 0) {
+					ImVec2 cbMin = ImVec2(s_enableChatRectMin.x - 4, s_enableChatRectMin.y - 4);
+					ImVec2 cbMax = ImVec2(s_enableChatRectMax.x + 4, s_enableChatRectMax.y + 4);
+					dl->AddRectFilled(cbMin, cbMax, IM_COL32(0, 255, 80, 30));
+					dl->AddRect(cbMin, cbMax, IM_COL32(0, 255, 80, 200), 2.0f, 0, 2.0f);
+				}
+			} else {
+				// No spotlight — dim the whole screen
+				dl->AddRectFilled(ImVec2(0, 0), dispSize, IM_COL32(0, 0, 0, 180));
+			}
+
+			// Card window — centered or near spotlight
+			float cardW = 400.0f;
+			float cardH = (s_tutorialStep == 4) ? 160.0f : 180.0f;
+			float cardX, cardY;
+			if (hasSpot) {
+				cardX = spotMin.x;
+				cardY = spotMax.y + 12.0f;
+				if (cardY + cardH > dispSize.y - 20.0f)
+					cardY = spotMin.y - cardH - 12.0f;
+				if (cardX + cardW > dispSize.x - 10.0f)
+					cardX = dispSize.x - cardW - 10.0f;
+			} else {
+				cardX = (dispSize.x - cardW) * 0.5f;
+				cardY = (dispSize.y - cardH) * 0.5f;
+			}
+
+			ImGui::SetNextWindowPos(ImVec2(cardX, cardY), ImGuiCond_Always);
+			ImGui::SetNextWindowSize(ImVec2(cardW, cardH), ImGuiCond_Always);
+			ImGui::SetNextWindowBgAlpha(0.95f);
+			ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16, 12));
+			ImGui::Begin("##TutorialCard", nullptr,
+				ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+				ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings |
+				ImGuiWindowFlags_NoFocusOnAppearing);
+
+			ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.6f, 1.0f), "SETUP  %d / 4", s_tutorialStep);
+			ImGui::Separator();
+			ImGui::Spacing();
+
+			if (s_tutorialStep == 1) {
+				ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.2f, 1.0f), "WELCOME TO FALLOUT 4 GLOBAL CHAT");
+				ImGui::Spacing();
+				ImGui::TextWrapped("This quick guide will show you the key features. Click Next to continue.");
+			} else if (s_tutorialStep == 2) {
+				ImGui::TextWrapped("Click the gear icon to open Chat Settings.");
+			} else if (s_tutorialStep == 3) {
+				ImGui::TextWrapped("Use the Enable Chat toggle to show or hide the chat overlay.");
+			} else if (s_tutorialStep == 4) {
+				ImGui::TextWrapped("Press F11 to open or close chat at any time.\nPress ESC to close chat quickly.");
+			}
+
+			ImGui::Spacing();
+			ImGui::Spacing();
+
+			bool advance = false;
+			bool skip    = false;
+
+			if (s_tutorialStep == 4) {
+				if (ImGui::Button("Got it!", ImVec2(120, 28)))
+					advance = true;
+			} else {
+				if (ImGui::Button("Next ->", ImVec2(100, 28)))
+					advance = true;
+				ImGui::SameLine();
+				if (ImGui::Button("Skip", ImVec2(60, 28)))
+					skip = true;
+			}
+
+			if (advance || skip) {
+				if (skip || s_tutorialStep == 4) {
+					::SaveTutorialSeen();
+					s_tutorialStep = -1;
+				} else {
+					s_tutorialStep++;
+					if (s_tutorialStep == 3)
+						s_tutorialForceSettings = true;
+				}
+			}
+
+			ImGui::End();
+			ImGui::PopStyleVar();
+		}
 
 		static std::string CurrentTimestamp()
 		{
@@ -216,39 +354,46 @@ namespace FalloutChat
 		static bool DecodeAndQueue(const std::string& cacheKey, std::vector<uint8_t>& bytes)
 		{
 			IWICImagingFactory* factory = nullptr;
-			CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory));
-			if (!factory) return false;
+			HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory));
+			if (!factory) { logger::warn("DecodeAndQueue: WICFactory failed hr={:08X}", (uint32_t)hr); return false; }
 
 			IWICStream* stream = nullptr;
 			factory->CreateStream(&stream);
+			if (!stream) { factory->Release(); logger::warn("DecodeAndQueue: CreateStream failed"); return false; }
 			stream->InitializeFromMemory(bytes.data(), static_cast<DWORD>(bytes.size()));
 
 			IWICBitmapDecoder* decoder = nullptr;
-			factory->CreateDecoderFromStream(stream, nullptr, WICDecodeMetadataCacheOnLoad, &decoder);
+			hr = factory->CreateDecoderFromStream(stream, nullptr, WICDecodeMetadataCacheOnLoad, &decoder);
 			stream->Release();
-			if (!decoder) { factory->Release(); return false; }
+			if (!decoder) { factory->Release(); logger::warn("DecodeAndQueue: CreateDecoder failed hr={:08X} bytes={}", (uint32_t)hr, bytes.size()); return false; }
 
 			IWICBitmapFrameDecode* frame = nullptr;
 			decoder->GetFrame(0, &frame);
 			decoder->Release();
-			if (!frame) { factory->Release(); return false; }
+			if (!frame) { factory->Release(); logger::warn("DecodeAndQueue: GetFrame failed"); return false; }
 
 			UINT w = 0, h = 0;
 			frame->GetSize(&w, &h);
 			if (w == 0 || h == 0 || w > 4096 || h > 4096) {
-				frame->Release(); factory->Release(); return false;
+				frame->Release(); factory->Release();
+				logger::warn("DecodeAndQueue: bad dimensions {}x{}", w, h);
+				return false;
 			}
 
 			IWICFormatConverter* conv = nullptr;
 			factory->CreateFormatConverter(&conv);
-			conv->Initialize(frame, GUID_WICPixelFormat32bppRGBA, WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeMedianCut);
+			if (!conv) { frame->Release(); factory->Release(); logger::warn("DecodeAndQueue: CreateFormatConverter failed"); return false; }
+			hr = conv->Initialize(frame, GUID_WICPixelFormat32bppRGBA, WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeMedianCut);
 			frame->Release();
+			if (FAILED(hr)) { conv->Release(); factory->Release(); logger::warn("DecodeAndQueue: converter init failed hr={:08X}", (uint32_t)hr); return false; }
 
 			std::vector<uint8_t> pixels(static_cast<size_t>(w) * h * 4);
-			conv->CopyPixels(nullptr, w * 4, static_cast<UINT>(pixels.size()), pixels.data());
+			hr = conv->CopyPixels(nullptr, w * 4, static_cast<UINT>(pixels.size()), pixels.data());
 			conv->Release();
 			factory->Release();
+			if (FAILED(hr)) { logger::warn("DecodeAndQueue: CopyPixels failed hr={:08X}", (uint32_t)hr); return false; }
 
+			logger::warn("DecodeAndQueue: success {}x{} for {}", w, h, cacheKey);
 			std::lock_guard<std::mutex> lock(s_imageMutex);
 			s_pendingUploads.push_back({ cacheKey, std::move(pixels), static_cast<int>(w), static_cast<int>(h) });
 			return true;
@@ -599,6 +744,8 @@ namespace FalloutChat
 					ImGui::Spacing(); ImGui::Spacing();
 					if (ImGui::Button("I Agree & Continue", ImVec2(200, 30))) {
 						::SavePrivacyPolicy();
+						if (!::g_tutorialSeen)
+							s_tutorialStep = 1;
 					}
 					ImGui::SameLine();
 					if (ImGui::Button("Decline & Close", ImVec2(200, 30))) {
@@ -621,7 +768,7 @@ namespace FalloutChat
 				}
 
 				bool showChat = (g_chatOpen && ::g_privacyAccepted) ||
-				                (s_passiveEverTriggered && s_passiveAlpha > 0.01f && !g_chatOpen);
+				                (g_chatEnabled && s_passiveEverTriggered && s_passiveAlpha > 0.01f && !g_chatOpen);
 
 				if (showChat) {
 					float alpha = g_chatOpen ? 1.0f : (s_passiveAlpha * s_passiveMaxAlpha);
@@ -667,10 +814,31 @@ namespace FalloutChat
 
 						if (ImGui::Button(ICON_FA_GEAR, ImVec2(26, 0)))
 							ImGui::OpenPopup("##ChatSettings");
+						s_gearRectMin = ImGui::GetItemRectMin();
+						s_gearRectMax = ImGui::GetItemRectMax();
 
+						if (s_tutorialStep == 3) {
+							ImGui::OpenPopup("##ChatSettings");  // re-open every frame so click-outside can't dismiss it
+						} else if (s_tutorialForceSettings) {
+							ImGui::OpenPopup("##ChatSettings");
+							s_tutorialForceSettings = false;
+						}
 						if (ImGui::BeginPopup("##ChatSettings")) {
+							s_settingsPopupRectMin = ImGui::GetWindowPos();
+							s_settingsPopupRectMax = ImVec2(s_settingsPopupRectMin.x + ImGui::GetWindowWidth(), s_settingsPopupRectMin.y + ImGui::GetWindowHeight());
+							ImGui::BeginDisabled(s_tutorialStep == 3);
 							ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.6f, 1.0f), "Chat Settings");
 							ImGui::Separator();
+							bool prevEnabled = g_chatEnabled;
+							ImGui::Checkbox("Enable Chat", &g_chatEnabled);
+							s_enableChatRectMin = ImGui::GetItemRectMin();
+							s_enableChatRectMax = ImGui::GetItemRectMax();
+							if (g_chatEnabled != prevEnabled) {
+								::SaveChatEnabled(g_chatEnabled);
+								if (!g_chatEnabled && g_chatOpen)
+									ToggleChat(true, false);
+							}
+							ImGui::Spacing();
 							ImGui::SetNextItemWidth(180.0f);
 							ImGui::SliderFloat("Passive opacity", &s_passiveMaxAlpha, 0.1f, 1.0f, "%.2f");
 							ImGui::SetNextItemWidth(180.0f);
@@ -699,6 +867,12 @@ namespace FalloutChat
 							ImGui::PopStyleColor(4);
 							if (ImGui::Button(ICON_FA_GLOBE " Website", ImVec2(180, 0)))
 								ShellExecuteA(NULL, "open", "https://fallenworld.nexus/", NULL, NULL, SW_SHOWNORMAL);
+							ImGui::Separator();
+							if (ImGui::Button("Replay Tutorial", ImVec2(180, 0))) {
+								s_tutorialStep = 1;
+								ImGui::CloseCurrentPopup();
+							}
+							ImGui::EndDisabled();
 							ImGui::EndPopup();
 						}
 
@@ -717,6 +891,50 @@ namespace FalloutChat
 						}
 						ImGui::Separator();
 					}
+
+					// ── Ticker strip ────────────────────────────────────────────────────────
+					{
+						ImVec2  stripMin = ImGui::GetCursorScreenPos();
+						float   winW     = ImGui::GetContentRegionAvail().x;
+						float   lineH    = ImGui::GetTextLineHeight();
+						float   stripH   = lineH + 4.0f;
+						ImVec2  stripMax(stripMin.x + winW, stripMin.y + stripH);
+
+						ImDrawList* dl = ImGui::GetWindowDrawList();
+						dl->PushClipRect(stripMin, stripMax, true);
+
+						ImU32 tickerColor = ImGui::ColorConvertFloat4ToU32(
+							ImVec4(0.0f, 1.0f, 0.3f, 1.0f));
+
+						float msgWidths[kTickerCount];
+						float tapePositions[kTickerCount];
+						float totalCycle = 0.0f;
+						for (int i = 0; i < kTickerCount; ++i) {
+							msgWidths[i]    = ImGui::CalcTextSize(kTickerMessages[i]).x;
+							tapePositions[i] = totalCycle + winW;
+							totalCycle      += winW + msgWidths[i];
+						}
+
+						float offset = fmodf(static_cast<float>(ImGui::GetTime()) * kTickerSpeed, totalCycle);
+
+						for (int i = 0; i < kTickerCount; ++i) {
+							for (int wrap = 0; wrap < 2; ++wrap) {
+								float screenX = tapePositions[i] - offset
+											  + (wrap == 0 ? 0.0f : totalCycle);
+								if (screenX < winW + msgWidths[i] && screenX + msgWidths[i] > 0.0f) {
+									dl->AddText(
+										ImVec2(stripMin.x + screenX, stripMin.y + 2.0f),
+										tickerColor,
+										kTickerMessages[i]);
+								}
+							}
+						}
+
+						dl->PopClipRect();
+						ImGui::Dummy(ImVec2(winW, stripH));
+						ImGui::Separator();
+					}
+					// ── End ticker strip ─────────────────────────────────────────────────────
 
 					float footerHeight = g_chatOpen
 						? (ImGui::GetStyle().ItemSpacing.y + ImGui::GetFrameHeightWithSpacing())
@@ -781,6 +999,8 @@ namespace FalloutChat
 					}
 
 					ImGui::End();
+
+					DrawTutorialOverlay();
 					ImGui::PopStyleVar();
 
 					if (closeRequested)
@@ -788,7 +1008,7 @@ namespace FalloutChat
 				}
 
 				// ── Unread badge ─────────────────────────────────────────────────────
-				if (!g_chatOpen && s_unreadCount > 0) {
+				if (g_chatEnabled && !g_chatOpen && s_unreadCount > 0) {
 					ImGuiIO& badgeIO = ImGui::GetIO();
 					float pulse = 0.5f + 0.5f * sinf(static_cast<float>(ImGui::GetTime()) * 3.0f);
 					ImU32 glowColor = ImGui::ColorConvertFloat4ToU32(ImVec4(0.0f, 0.8f + 0.2f * pulse, 0.3f, 0.9f));

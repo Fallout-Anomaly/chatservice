@@ -107,14 +107,6 @@
   .msg-sender { font-weight: 600; color: #4ade80; }
   .msg-text   { color: #e2e8f0; }
 
-  .msg-img {
-    display: block;
-    max-width: 280px;
-    max-height: 200px;
-    margin-top: 4px;
-    border-radius: 4px;
-    object-fit: contain;
-  }
 
   .msg-row.system .msg-sender { color: #fbbf24; }
   .msg-row.system .msg-text   { color: #fcd34d; }
@@ -482,52 +474,6 @@
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 
-  // Splits raw message text on image/tenor URLs and returns HTML with inline <img> tags.
-  // Tenor view URLs are resolved asynchronously via Tenor's anonymous API.
-  var MEDIA_RE = /(https?:\/\/tenor\.com\/view\/\S+|https?:\/\/\S+\.(?:png|jpg|jpeg|gif|webp)(?:\?\S*)?)/i;
-  var TENOR_KEY = 'LIVDSRZULELA';
-  var tenorSeq  = 0;
-  var tenorPending = [];
-
-  function renderText(raw) {
-    var parts = String(raw).split(MEDIA_RE);
-    var html = '';
-    for (var i = 0; i < parts.length; i++) {
-      if (i % 2 === 1) {
-        var url = parts[i];
-        if (/tenor\.com\/view\//i.test(url)) {
-          var uid = 'ti' + (++tenorSeq);
-          html += '<img id="' + uid + '" class="msg-img" style="display:none" alt="GIF">';
-          tenorPending.push({ id: uid, url: url });
-        } else {
-          html += '<img src="' + escapeHtml(url) + '" class="msg-img" onerror="this.style.display=\'none\'">';
-        }
-      } else {
-        html += escapeHtml(parts[i]);
-      }
-    }
-    return html;
-  }
-
-  function flushTenorPending() {
-    var pending = tenorPending.splice(0);
-    pending.forEach(function(item) {
-      var m = item.url.match(/(\d+)\s*$/);
-      if (!m) return;
-      fetch('https://tenor.googleapis.com/v2/posts?ids=' + m[1] + '&key=' + TENOR_KEY + '&limit=1')
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-          var result = data && data.results && data.results[0];
-          if (!result) return;
-          var fmt = result.media_formats;
-          var src = (fmt.gif && fmt.gif.url) || (fmt.tinygif && fmt.tinygif.url);
-          if (!src) return;
-          var el = document.getElementById(item.id);
-          if (el) { el.src = src; el.style.display = ''; }
-        })
-        .catch(function(e) { console.warn('tenor: failed to resolve ' + item.url + ' — ' + e); });
-    });
-  }
   function nowTs() {
     var n = new Date();
     return n.getHours().toString().padStart(2,'0') + ':' + n.getMinutes().toString().padStart(2,'0') + ':' + n.getSeconds().toString().padStart(2,'0');
@@ -595,6 +541,9 @@
     var input = document.getElementById('usernameInput');
     var name = input.value.trim();
     if (!name) { console.warn('settings: empty username ignored'); return; }
+    name = name.replace(/[\x00-\x1F\x7F]/g, '');
+    if (name.length > 32) name = name.substr(0, 32);
+    if (!name) { console.warn('settings: username empty after sanitize'); return; }
     console.log('settings: setting username "' + name + '"');
     if (typeof window.SendMessage === 'function') window.SendMessage('/name ' + name);
     else console.error('settings: SendMessage not available');
@@ -856,7 +805,7 @@
       var row = document.createElement('div');
       
       var safeSender = formatAdmin(escapeHtml(sender));
-      var safeText   = formatAdmin(renderText(text));
+      var safeText   = formatAdmin(escapeHtml(text));
 
       if (isEmote) {
         row.className = 'msg-row emote';
@@ -874,7 +823,6 @@
                       + '<span class="msg-text">' + safeText + '</span>';
       }
       list.appendChild(row);
-      if (tenorPending.length) flushTenorPending();
 
       // Keep only the last 200 messages
       while (list.children.length > 200) {
@@ -902,6 +850,13 @@
       var input = document.getElementById('chatInput');
       var val = input.value.trim();
       if (val) {
+        if (val.length > 500) {
+          addSystemMessage('Message too long (max 500 characters).');
+          input.value = '';
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
         console.log('input: send len=' + val.length);
         if (typeof window.SendMessage === 'function') window.SendMessage(val);
         else console.error('input: SendMessage not available');

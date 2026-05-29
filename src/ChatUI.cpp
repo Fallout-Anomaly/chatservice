@@ -39,6 +39,11 @@ namespace FalloutChat
 			while ((pos = s.find('\n', pos)) != std::string::npos) { s.replace(pos, 1, "\\n");  pos += 2; }
 			pos = 0;
 			while ((pos = s.find('\r', pos)) != std::string::npos) { s.replace(pos, 1, "\\r");  pos += 2; }
+			// Unicode line/paragraph separators (U+2028, U+2029) terminate JS string literals
+			pos = 0;
+			while ((pos = s.find("\xE2\x80\xA8", pos)) != std::string::npos) { s.replace(pos, 3, "\\u2028"); pos += 6; }
+			pos = 0;
+			while ((pos = s.find("\xE2\x80\xA9", pos)) != std::string::npos) { s.replace(pos, 3, "\\u2029"); pos += 6; }
 			return s;
 		}
 
@@ -95,6 +100,11 @@ namespace FalloutChat
 					std::string newName = text.substr(6);
 					while (!newName.empty() && newName.front() == ' ') newName.erase(newName.begin());
 					while (!newName.empty() && newName.back() == ' ') newName.pop_back();
+					// Strip control characters
+					newName.erase(std::remove_if(newName.begin(), newName.end(),
+						[](unsigned char c) { return c < 0x20 || c == 0x7F; }), newName.end());
+					// Cap length
+					if (newName.size() > 32) newName = newName.substr(0, 32);
 					if (!newName.empty()) {
 						logger::info("ChatUI: /name command, renaming to '{}'", newName);
 						ChatClient::GetSingleton().SetUsername(newName);

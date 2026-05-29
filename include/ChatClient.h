@@ -37,6 +37,7 @@ namespace FalloutChat
 	private:
 		ChatClient() = default;
 		~ChatClient() { Shutdown(); }
+		void ShutdownNoLock();
 
 		std::string _url;
 		std::string _username;

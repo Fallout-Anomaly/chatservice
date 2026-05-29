@@ -1,8 +1,11 @@
 set(SOURCES
-	include/Renderer.h
+	src/ChatUI.h
 	include/ChatClient.h
 	src/main.cpp
-	src/Renderer.cpp
+	src/ChatUI.cpp
 	src/ChatClient.cpp
 	src/PCH.h
+	src/KeyHandler.h
+	src/KeyHandler.cpp
+	src/PrismaUI_F4_API.h
 )

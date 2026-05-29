@@ -5,6 +5,7 @@ set MSBUILD="C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Cur
 set VCPKG_ROOT=C:\Program Files\Microsoft Visual Studio\2022\Community\VC\vcpkg
 set VCTOOLS_VERSION=14.44.35207
 set DEPLOY_DIR=E:\Modlists\Fallen World Alpha 2\mods\FalloutChat\F4SE\Plugins
+set VIEWS_DIR=E:\Modlists\Fallen World Alpha 2\mods\FalloutChat\PrismaUI_F4\views
 
 if not exist "build" (
     echo Configuring CMake...
@@ -24,9 +25,9 @@ if %ERRORLEVEL% NEQ 0 (
 
 echo Deploying DLL and assets...
 if not exist "%DEPLOY_DIR%" mkdir "%DEPLOY_DIR%"
+if not exist "%VIEWS_DIR%" mkdir "%VIEWS_DIR%"
 copy /Y "build\Release\FalloutChat.dll" "%DEPLOY_DIR%\FalloutChat.dll"
-copy /Y "fonts\fa-brands-400.ttf" "%DEPLOY_DIR%\fa-brands-400.ttf"
-copy /Y "fonts\fa-solid-900.ttf" "%DEPLOY_DIR%\fa-solid-900.ttf"
+copy /Y "assets\views\chat.html" "%VIEWS_DIR%\chat.html"
 
 echo.
 echo Build and Deployment Successful!

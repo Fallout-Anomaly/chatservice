@@ -80,7 +80,6 @@ endif ()
 
 find_package(fmt REQUIRED CONFIG)
 find_package(spdlog REQUIRED CONFIG)
-find_package(imgui REQUIRED CONFIG)
 find_package(minhook REQUIRED CONFIG)
 find_package(ixwebsocket REQUIRED CONFIG)
 
@@ -133,15 +132,9 @@ target_link_libraries(
 		CommonLibF4::CommonLibF4
 		fmt::fmt
 		spdlog::spdlog
-		imgui::imgui
 		minhook::minhook
 		ixwebsocket::ixwebsocket
 		Bcrypt.lib
-		dxgi.lib
-		d3d11.lib
-		winhttp.lib
-		windowscodecs.lib
-		ole32.lib
 )
 
 target_precompile_headers(

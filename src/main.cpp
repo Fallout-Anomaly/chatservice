@@ -1,5 +1,5 @@
 #include "PCH.h"
-#include "Renderer.h"
+#include "ChatUI.h"
 #include "ChatClient.h"
 #include <SimpleIni.h>
 
@@ -160,10 +160,12 @@ extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface * a_
 	const F4SE::MessagingInterface* messageInterface = F4SE::GetMessagingInterface();
 	messageInterface->RegisterListener([](F4SE::MessagingInterface::Message* msg) -> void {
 		if (msg->type == F4SE::MessagingInterface::kGameDataReady) {
-			FalloutChat::Renderer::InstallHooks();
+			FalloutChat::ChatUI::Initialize();
 			if (username.empty())
 				username = "Player";
 			FalloutChat::ChatClient::GetSingleton().Initialize(serverUrl, username, 0);
+		} else if (msg->type == F4SE::MessagingInterface::kPostLoadGame || msg->type == F4SE::MessagingInterface::kNewGame) {
+			FalloutChat::ChatUI::CreateView();
 		}
 	});
 

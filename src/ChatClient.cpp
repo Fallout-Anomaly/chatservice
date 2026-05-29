@@ -1,5 +1,6 @@
 #include "PCH.h"
 #include "ChatClient.h"
+#include "ChatUI.h"
 #include <ixwebsocket/IXNetSystem.h>
 #include <chrono>
 #include <iomanip>
@@ -13,11 +14,21 @@ namespace FalloutChat
 		return instance;
 	};
 
+	void ChatClient::ShutdownNoLock()
+	{
+		if (_webSocket) {
+			_webSocket->stop();
+			_webSocket.reset();
+			ix::uninitNetSystem();
+		}
+		_connected = false;
+	}
+
 	void ChatClient::Initialize(const std::string& url, const std::string& username, uint64_t steamID)
 	{
 		std::lock_guard<std::mutex> lock(_mutex);
 		if (_webSocket) {
-			Shutdown();
+			ShutdownNoLock();
 		}
 
 		_url = url;
@@ -35,88 +46,101 @@ namespace FalloutChat
 
 		_webSocket->setOnMessageCallback([this](const ix::WebSocketMessagePtr& msg) {
 			if (msg->type == ix::WebSocketMessageType::Message) {
-				std::lock_guard<std::mutex> innerLock(_mutex);
-				const std::string& payload = msg->str;
+				bool gotMessage = false;
+				{
+					std::lock_guard<std::mutex> innerLock(_mutex);
+					const std::string& payload = msg->str;
 
-				if (payload.rfind("[COUNT]:", 0) == 0) {
-					try { _onlineCount = std::stoi(payload.substr(8)); } catch (...) {}
-					return;
-				}
+					if (payload.rfind("[COUNT]:", 0) == 0) {
+						try { _onlineCount = std::stoi(payload.substr(8)); } catch (...) {}
+					} else if (payload.rfind("[HISTORY]", 0) == 0) {
+						std::string body = payload.substr(9);
+						auto pipePos = body.find('|');
+						if (pipePos != std::string::npos) {
+							std::string ts   = body.substr(0, pipePos);
+							std::string rest = body.substr(pipePos + 1);
 
-				if (payload.rfind("[HISTORY]", 0) == 0) {
-					std::string body = payload.substr(9);
-					auto pipePos = body.find('|');
-					if (pipePos == std::string::npos) return;
-					std::string ts   = body.substr(0, pipePos);
-					std::string rest = body.substr(pipePos + 1);
+							ChatMessage histMsg;
+							histMsg.timestamp = ts;
 
-					ChatMessage histMsg;
-					histMsg.timestamp = ts;
-
-					if (rest.rfind("[EMOTE]", 0) == 0) {
-						std::string emoteBody = rest.substr(7);
-						auto delim = emoteBody.find('\x01');
-						if (delim != std::string::npos) {
-							histMsg.sender = emoteBody.substr(0, delim);
-							histMsg.text   = emoteBody.substr(delim + 1);
-						} else {
-							histMsg.text = emoteBody;
+							if (rest.rfind("[EMOTE]", 0) == 0) {
+								std::string emoteBody = rest.substr(7);
+								auto delim = emoteBody.find('\x01');
+								if (delim != std::string::npos) {
+									histMsg.sender = emoteBody.substr(0, delim);
+									histMsg.text   = emoteBody.substr(delim + 1);
+								} else {
+									histMsg.text = emoteBody;
+								}
+								histMsg.isEmote = true;
+							} else {
+								auto colonPos = rest.find(':');
+								if (colonPos != std::string::npos) {
+									histMsg.sender = rest.substr(0, colonPos);
+									histMsg.text   = rest.substr(colonPos + 1);
+									if (!histMsg.text.empty() && histMsg.text[0] == ' ')
+										histMsg.text = histMsg.text.substr(1);
+								} else {
+									histMsg.text = rest;
+								}
+							}
+							_messageQueue.push_back(histMsg);
+							gotMessage = true;
 						}
-						histMsg.isEmote = true;
 					} else {
-						auto colonPos = rest.find(':');
-						if (colonPos != std::string::npos) {
-							histMsg.sender = rest.substr(0, colonPos);
-							histMsg.text   = rest.substr(colonPos + 1);
-							if (!histMsg.text.empty() && histMsg.text[0] == ' ')
-								histMsg.text = histMsg.text.substr(1);
+						ChatMessage chatMsg;
+
+						if (payload.rfind("[EMOTE]", 0) == 0) {
+							std::string body = payload.substr(7);
+							auto delim = body.find('\x01');
+							if (delim != std::string::npos) {
+								chatMsg.sender = body.substr(0, delim);
+								chatMsg.text   = body.substr(delim + 1);
+							} else {
+								chatMsg.text = body;
+							}
+							chatMsg.isEmote = true;
 						} else {
-							histMsg.text = rest;
+							size_t colonPos = payload.find(':');
+							if (colonPos != std::string::npos) {
+								chatMsg.sender = payload.substr(0, colonPos);
+								chatMsg.text   = payload.substr(colonPos + 1);
+								if (!chatMsg.text.empty() && chatMsg.text[0] == ' ')
+									chatMsg.text = chatMsg.text.substr(1);
+							} else {
+								chatMsg.sender = "Server";
+								chatMsg.text   = payload;
+							}
 						}
-					}
-					_messageQueue.push_back(histMsg);
-					return;
-				}
 
-				ChatMessage chatMsg;
+						auto now = std::chrono::system_clock::now();
+						auto time_t_now = std::chrono::system_clock::to_time_t(now);
+						std::tm tm_now;
+						localtime_s(&tm_now, &time_t_now);
+						std::ostringstream oss;
+						oss << std::put_time(&tm_now, "%H:%M:%S");
+						chatMsg.timestamp = oss.str();
 
-				if (payload.rfind("[EMOTE]", 0) == 0) {
-					std::string body = payload.substr(7);
-					auto delim = body.find('\x01');
-					if (delim != std::string::npos) {
-						chatMsg.sender = body.substr(0, delim);
-						chatMsg.text   = body.substr(delim + 1);
-					} else {
-						chatMsg.text = body;
-					}
-					chatMsg.isEmote = true;
-				} else {
-					size_t colonPos = payload.find(':');
-					if (colonPos != std::string::npos) {
-						chatMsg.sender = payload.substr(0, colonPos);
-						chatMsg.text   = payload.substr(colonPos + 1);
-						if (!chatMsg.text.empty() && chatMsg.text[0] == ' ')
-							chatMsg.text = chatMsg.text.substr(1);
-					} else {
-						chatMsg.sender = "Server";
-						chatMsg.text   = payload;
+						_messageQueue.push_back(chatMsg);
+						gotMessage = true;
 					}
 				}
-
-				auto now = std::chrono::system_clock::now();
-				auto time_t_now = std::chrono::system_clock::to_time_t(now);
-				std::tm tm_now;
-				localtime_s(&tm_now, &time_t_now);
-				std::ostringstream oss;
-				oss << std::put_time(&tm_now, "%H:%M:%S");
-				chatMsg.timestamp = oss.str();
-
-				_messageQueue.push_back(chatMsg);
+				// Dispatch to game thread — Invoke must not be called from WebSocket worker
+				if (gotMessage) {
+					if (auto* ti = F4SE::GetTaskInterface())
+						ti->AddTask([]() { ChatUI::OnMessagesReceived(); });
+				}
 			} else if (msg->type == ix::WebSocketMessageType::Open) {
 				_connected = true;
-			} else if (msg->type == ix::WebSocketMessageType::Close || msg->type == ix::WebSocketMessageType::Error) {
+				logger::warn("ChatClient: connected to {}", _url);
+			} else if (msg->type == ix::WebSocketMessageType::Close) {
 				_connected = false;
 				_disconnectedAt = std::chrono::steady_clock::now();
+				logger::warn("ChatClient: disconnected (code={} reason={})", msg->closeInfo.code, msg->closeInfo.reason);
+			} else if (msg->type == ix::WebSocketMessageType::Error) {
+				_connected = false;
+				_disconnectedAt = std::chrono::steady_clock::now();
+				logger::warn("ChatClient: error - {}", msg->errorInfo.reason);
 			}
 		});
 
@@ -126,12 +150,7 @@ namespace FalloutChat
 	void ChatClient::Shutdown()
 	{
 		std::lock_guard<std::mutex> lock(_mutex);
-		if (_webSocket) {
-			_webSocket->stop();
-			_webSocket.reset();
-			ix::uninitNetSystem();
-		}
-		_connected = false;
+		ShutdownNoLock();
 	}
 
 	void ChatClient::SendRename(const std::string& name)

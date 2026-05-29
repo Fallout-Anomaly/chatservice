@@ -1,0 +1,44 @@
+# Build output
+build/
+cmake-build-debug/
+cmake-build-release/
+out/
+bin/
+*.dll
+*.lib
+*.pdb
+*.exp
+*.ilk
+
+# Logs
+*.log
+test_log.txt
+cmake_log.txt
+
+# CMake generated
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+
+# vcpkg installed packages (resolved from vcpkg.json at build time)
+vcpkg_installed/
+
+# Local scripts with machine-specific paths
+run_cmake.py
+run.bat
+
+# Claude Code internals
+.agents/
+skills-lock.json
+
+# JetBrains IDE
+.idea/

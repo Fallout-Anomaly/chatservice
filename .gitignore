@@ -47,8 +47,5 @@ CLAUDE.md
 # JetBrains IDE
 .idea/
 
-# User config — contains username, never commit
-FalloutChat.ini
-
 # Backup files
 *.bak

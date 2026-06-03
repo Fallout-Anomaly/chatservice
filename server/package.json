@@ -2,11 +2,8 @@
   "name": "falloutchat-server",
   "version": "1.0.0",
   "description": "WebSocket relay server for FalloutChat",
-  "main": "index.js",
+  "module": "index.js",
   "scripts": {
-    "start": "node index.js"
-  },
-  "dependencies": {
-    "ws": "^8.18.0"
+    "start": "bun index.js"
   }
 }

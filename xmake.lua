@@ -58,6 +58,7 @@ target("FalloutChat")
     after_build(function(target)
         local deploys = {
             "E:\\Modlists\\Fallen World Alpha 2\\mods\\FalloutChat",
+            "D:\\Games\\ModlistDownloads\\mods\\FalloutChat",
         }
         for _, base in ipairs(deploys) do
             if os.isdir(base) then

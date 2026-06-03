@@ -1,10 +1,11 @@
 'use strict';
 
-const PORT        = parseInt(process.env.PORT        || '3000', 10);
-const MAX_HISTORY = parseInt(process.env.MAX_HISTORY || '50',   10);
-const MAX_MSG_LEN = 600;   // hard cap on raw incoming message bytes
+const PORT           = parseInt(process.env.PORT           || '3000', 10);
+const MAX_HISTORY    = parseInt(process.env.MAX_HISTORY    || '50',   10);
+const MAX_CLIENTS    = parseInt(process.env.MAX_CLIENTS    || '200',  10);
+const MAX_MSG_LEN    = 600;   // hard cap on raw incoming message bytes
 const MAX_USERNAME_LEN = 32;
-const RATE_LIMIT_MS = 500; // minimum ms between messages per client
+const RATE_LIMIT_MS  = 500;   // minimum ms between messages per client
 
 // { ts: 'HH:MM:SS', raw: '<broadcast string>' }
 const history = [];
@@ -61,6 +62,11 @@ Bun.serve({
 
   websocket: {
     open(ws) {
+      if (clients.size >= MAX_CLIENTS) {
+        console.warn(`[reject] connection limit reached (${MAX_CLIENTS})`);
+        ws.close(1013, 'Server full');
+        return;
+      }
       clients.add(ws);
       console.log(`[+] connected  total=${clients.size}`);
 

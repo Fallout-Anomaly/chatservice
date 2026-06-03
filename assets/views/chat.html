@@ -721,6 +721,9 @@
     closeSettings();
     document.getElementById('privacyPolicy').classList.remove('active');
     document.getElementById('tutorialModal').classList.remove('active');
+    var input = document.getElementById('chatInput');
+    input.value = '';
+    updateCharCount(input);
   };
 
   // ── External links ────────────────────────────────────────────────────────

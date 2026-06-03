@@ -69,6 +69,10 @@ target("FalloutChat")
                 local pdb = path.join(target:targetdir(), target:name() .. ".pdb")
                 if os.isfile(pdb) then os.cp(pdb, plugins) end
                 os.cp(path.join(os.scriptdir(), "assets/views/chat.html"), views)
+                local ini = path.join(os.scriptdir(), "FalloutChat.ini")
+                if not os.isfile(path.join(plugins, "FalloutChat.ini")) then
+                    os.cp(ini, plugins)
+                end
                 cprint("${bright green}deploy:${clear} %s", base)
             end
         end

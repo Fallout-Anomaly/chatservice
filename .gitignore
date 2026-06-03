@@ -39,6 +39,16 @@ run.bat
 # Claude Code internals
 .agents/
 skills-lock.json
+CLAUDE.md
+
+# xmake build cache
+.xmake/
 
 # JetBrains IDE
 .idea/
+
+# User config — contains username, never commit
+FalloutChat.ini
+
+# Backup files
+*.bak

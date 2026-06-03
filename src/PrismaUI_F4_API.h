@@ -20,7 +20,7 @@ namespace PRISMA_UI_API {
     constexpr const auto PrismaUIPluginName = "PrismaUI_F4";
 
     // Available PrismaUI interface versions
-    enum class InterfaceVersion : uint8_t { V1, V2 };
+    enum class InterfaceVersion : uint8_t { V1, V2, V3, V4 };
 
     typedef void (*OnDomReadyCallback)(PrismaView view);
     typedef void (*JSCallback)(const char* result);
@@ -116,6 +116,43 @@ namespace PRISMA_UI_API {
         virtual void RegisterConsoleCallback(PrismaView view, ConsoleMessageCallback callback) noexcept = 0;
     };
 
+    // PrismaUI modder interface v3 (extends v2)
+    class IVPrismaUI3 : public IVPrismaUI2 {
+    protected:
+        ~IVPrismaUI3() = default;
+
+    public:
+        // Register translations for a view from a Fallout 4 translation file.
+        // pluginName is the bare plugin name matching the translation file, e.g. "MyPlugin_F4".
+        // The framework detects the game language, loads Data\Interface\Translations\<pluginName>_<lang>.txt,
+        // and injects window.L10N / window.t into the page before scripts run (OnWindowObjectReady).
+        // Call this immediately after CreateView, before the DOM is ready.
+        virtual void RegisterTranslations(PrismaView view, const char* pluginName) noexcept = 0;
+    };
+
+    // Callback type for EnumerateViews. Called once per view with the view's ID and its
+    // original html path (relative to Data/PrismaUI_F4/views/, e.g. "debug_panel.html").
+    typedef void (*ViewEnumCallback)(PrismaView id, const char* htmlPath, void* userdata);
+
+    // PrismaUI modder interface v4 (extends v3)
+    class IVPrismaUI4 : public IVPrismaUI3 {
+    protected:
+        ~IVPrismaUI4() = default;
+
+    public:
+        // Game-thread-safe JS listener. Callback fires on the game thread — RE:: access is safe
+        // directly inside the callback with no AddTask required.
+        // Use this instead of RegisterJSListener whenever you need to touch game state.
+        virtual void BindUIEvent(PrismaView view, const char* functionName,
+                                 JSListenerCallback callback) noexcept = 0;
+
+        // Enumerate all currently-registered views across all plugins.
+        // Callback is invoked synchronously for each view; htmlPath is the relative path
+        // passed to CreateView (e.g., "Interface/PrismaMCM/mcm.html").
+        // Safe to call from any thread.
+        virtual void EnumerateViews(ViewEnumCallback callback, void* userdata) noexcept = 0;
+    };
+
     // Maps interface types to InterfaceVersion enum values.
     // compile-time constraint -- only request interface versions that actually exist.
     template <typename T>
@@ -129,6 +166,16 @@ namespace PRISMA_UI_API {
     template <>
     struct InterfaceVersionMap<IVPrismaUI2> {
         static constexpr InterfaceVersion version = InterfaceVersion::V2;
+    };
+
+    template <>
+    struct InterfaceVersionMap<IVPrismaUI3> {
+        static constexpr InterfaceVersion version = InterfaceVersion::V3;
+    };
+
+    template <>
+    struct InterfaceVersionMap<IVPrismaUI4> {
+        static constexpr InterfaceVersion version = InterfaceVersion::V4;
     };
 
     typedef void* (*RequestPluginAPIFunc)(InterfaceVersion interfaceVersion);
@@ -156,8 +203,8 @@ namespace PRISMA_UI_API {
     /// Returns nullptr if the loaded PrismaUI DLL does not support the requested version.
     ///
     /// Usage:
-    ///   auto* m_prismaUI   = PRISMA_UI_API::RequestPluginAPI<PRISMA_UI_API::IVPrismaUI1>();
-    ///   auto* m_prismaUIv2 = PRISMA_UI_API::RequestPluginAPI<PRISMA_UI_API::IVPrismaUI2>();
+    ///   auto* api = PRISMA_UI_API::RequestPluginAPI<PRISMA_UI_API::IVPrismaUI4>(); // recommended
+    ///   auto* api = PRISMA_UI_API::RequestPluginAPI<PRISMA_UI_API::IVPrismaUI3>(); // legacy
     template <typename T>
     [[nodiscard]] inline T* RequestPluginAPI() {
         return static_cast<T*>(RequestPluginAPI(InterfaceVersionMap<T>::version));

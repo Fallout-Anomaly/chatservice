@@ -17,7 +17,7 @@ extern void SaveUsername(const std::string& newName);
 extern void SaveChatEnabled(bool enabled);
 extern void SaveFontSize(int size);
 extern void SaveOpacity(int opacity);
-extern uint64_t g_steamID;
+extern std::atomic<uint64_t> g_steamID;
 extern uint64_t FetchSteamID();
 
 namespace FalloutChat
@@ -26,7 +26,7 @@ namespace FalloutChat
 	{
 		static PRISMA_UI_API::IVPrismaUI2* g_api = nullptr;
 		static PrismaView g_view = 0;
-		static bool g_chatOpen = false;
+		static std::atomic<bool> g_chatOpen = false;
 
 		// Escape backslashes and double-quotes for embedding in a JS double-quoted string literal.
 		static std::string EscapeJS(std::string s)
@@ -85,7 +85,7 @@ namespace FalloutChat
 					logger::info("ChatUI: SteamID not cached, attempting fetch");
 					g_steamID = FetchSteamID();
 					if (g_steamID != 0) {
-						logger::info("ChatUI: SteamID fetched late: {}", g_steamID);
+						logger::info("ChatUI: SteamID fetched late: {}", g_steamID.load());
 						ChatClient::GetSingleton().SetSteamID(g_steamID);
 					}
 				}
@@ -111,35 +111,52 @@ namespace FalloutChat
 						ChatClient::GetSingleton().SendRename(newName);
 						::SaveUsername(newName);
 						g_api->Invoke(g_view, ("addSystemMessage(\"Username changed to: " + EscapeJS(newName) + "\")").c_str());
+						// Update JS g_localUsername so mention detection uses the new name immediately
+						g_api->Invoke(g_view, ("if(window.SetUsernameInput) window.SetUsernameInput(\"" + EscapeJS(newName) + "\");").c_str());
 					} else {
 						logger::warn("ChatUI: /name command ignored — name was blank after trim");
 					}
 					return;
 				}
 
-				auto* player = RE::PlayerCharacter::GetSingleton();
-				std::string locName = "";
-				if (player) {
-					if (auto* loc = player->currentLocation) {
-						if (loc->GetFullName()) locName = loc->GetFullName();
-					} else if (auto* cell = player->GetParentCell()) {
-						if (cell->GetFullName()) locName = cell->GetFullName();
-					}
-				}
-
 				if (text.size() > 4 && text.substr(0, 4) == "/me ")
 					logger::info("ChatUI: /me emote — relying on server to format as [EMOTE]");
-				logger::info("ChatUI: sending message, location='{}'", locName);
-				ChatClient::GetSingleton().Send(text, locName);
+
+				// Location read and Send must be on the game thread — RE:: objects are not thread-safe.
+				if (auto* ti = F4SE::GetTaskInterface()) {
+					ti->AddTask([text]() {
+						std::string locName;
+						auto* player = RE::PlayerCharacter::GetSingleton();
+						if (player) {
+							if (auto* loc = player->currentLocation) {
+								if (loc->GetFullName()) locName = loc->GetFullName();
+							} else if (auto* cell = player->GetParentCell()) {
+								if (cell->GetFullName()) locName = cell->GetFullName();
+							}
+						}
+						logger::info("ChatUI: sending message, location='{}'", locName);
+						ChatClient::GetSingleton().Send(text, locName);
+					});
+				} else {
+					logger::warn("ChatUI: SendMessage — task interface unavailable, sending without location");
+					ChatClient::GetSingleton().Send(text, "");
+				}
 			});
 
 			g_api->RegisterJSListener(view, "CloseChat", [](const char*) {
-				logger::info("ChatUI: CloseChat from JS");
-				ToggleChat();
+				logger::info("ChatUI: CloseChat from JS — dispatching to game thread");
+				if (auto* ti = F4SE::GetTaskInterface())
+					ti->AddTask([]() { ToggleChat(); });
+				else
+					logger::warn("ChatUI: CloseChat — task interface unavailable, skipping toggle");
 			});
 
 			g_api->RegisterJSListener(view, "OpenURL", [](const char* urlArgs) {
 				std::string url = UnquoteJS(urlArgs);
+				if (url.rfind("https://", 0) != 0) {
+					logger::warn("ChatUI: OpenURL blocked — non-https URL '{}'", url);
+					return;
+				}
 				logger::info("ChatUI: OpenURL '{}'", url);
 				ShellExecuteA(NULL, "open", url.c_str(), NULL, NULL, SW_SHOWNORMAL);
 			});
@@ -232,9 +249,13 @@ namespace FalloutChat
 				logger::error("ChatUI: CreateView called but API is null");
 				return;
 			}
-			if (g_view != 0) {
+			if (g_view != 0 && g_api->IsValid(g_view)) {
 				logger::info("ChatUI: CreateView skipped — view already exists ({})", g_view);
 				return;
+			}
+			if (g_view != 0) {
+				logger::warn("ChatUI: CreateView — stale handle {} invalidated, recreating", g_view);
+				g_view = 0;
 			}
 
 			g_view = g_api->CreateView("chat.html", OnDomReady);
@@ -272,7 +293,7 @@ namespace FalloutChat
 				g_api->Focus(g_view, false, false);
 				g_api->Invoke(g_view, "onChatOpened()");
 
-				// Hide the vanilla game cursor (which is pushed by the engine due to unpaused kUsesCursor)
+				// Hide the GFx game cursor (pushed by engine when FocusMenu opens)
 				auto ui = RE::UI::GetSingleton();
 				if (ui) {
 					auto cursorMenu = ui->GetMenu("CursorMenu");
@@ -280,11 +301,15 @@ namespace FalloutChat
 						cursorMenu->uiMovie->SetVisible(false);
 					}
 				}
+				// Hide the OS cursor — Focus() releases exclusive mouse capture, making
+				// the Windows cursor visible on top of the GFx cursor (double cursor).
+				// ShowCursor is ref-counted; loop until the counter goes negative.
+				while (::ShowCursor(FALSE) >= 0) {}
 			} else {
 				g_api->Unfocus(g_view);
 				g_api->Invoke(g_view, "onChatClosed()");
 
-				// Restore the vanilla game cursor
+				// Restore the GFx game cursor
 				auto ui = RE::UI::GetSingleton();
 				if (ui) {
 					auto cursorMenu = ui->GetMenu("CursorMenu");
@@ -292,6 +317,8 @@ namespace FalloutChat
 						cursorMenu->uiMovie->SetVisible(true);
 					}
 				}
+				// Restore the OS cursor to match what the game expects
+				while (::ShowCursor(TRUE) < 0) {}
 			}
 		}
 
@@ -305,6 +332,7 @@ namespace FalloutChat
 			if (!g_api || !g_api->IsValid(g_view)) return;
 
 			auto msgs = ChatClient::GetSingleton().GetNewMessages();
+			if (msgs.empty()) return;
 			logger::info("ChatUI: dispatching {} message(s) to UI", msgs.size());
 			std::string batch_js = "";
 			for (const auto& m : msgs) {

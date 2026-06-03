@@ -32,12 +32,10 @@ namespace FalloutChat
 		std::vector<ChatMessage> GetNewMessages();
 		bool IsConnected() const;
 		int  GetOnlineCount() const;
-		std::chrono::steady_clock::time_point GetDisconnectTime() const;
 
 	private:
 		ChatClient() = default;
 		~ChatClient() { Shutdown(); }
-		void ShutdownNoLock();
 
 		std::string _url;
 		std::string _username;

@@ -4,10 +4,11 @@
 #include <SimpleIni.h>
 
 CSimpleIniA ini(true, false, false);
-std::string serverUrl = "wss://fallenworld.nexus/ws";
+static std::mutex g_iniMutex;
+std::string serverUrl = "wss://chat.fallenworld.nexus/ws";
 std::string username = "Player";
 bool g_privacyAccepted = false;
-uint64_t g_steamID = 0;
+std::atomic<uint64_t> g_steamID = 0;
 bool g_chatEnabled = true;
 bool g_tutorialSeen = false;
 bool g_introDismissed = false;
@@ -53,6 +54,7 @@ uint64_t FetchSteamID()
 void SaveUsername(const std::string& newName)
 {
 	username = newName;
+	std::lock_guard<std::mutex> lock(g_iniMutex);
 	ini.LoadFile("Data\\F4SE\\Plugins\\FalloutChat.ini");
 	ini.SetValue("General", "username", newName.c_str());
 	ini.SaveFile("Data\\F4SE\\Plugins\\FalloutChat.ini");
@@ -61,6 +63,7 @@ void SaveUsername(const std::string& newName)
 
 void SavePrivacyPolicy()
 {
+	std::lock_guard<std::mutex> lock(g_iniMutex);
 	ini.LoadFile("Data\\F4SE\\Plugins\\FalloutChat.ini");
 	ini.SetBoolValue("General", "privacy_accepted", true);
 	ini.SaveFile("Data\\F4SE\\Plugins\\FalloutChat.ini");
@@ -71,6 +74,7 @@ void SavePrivacyPolicy()
 void SaveChatEnabled(bool enabled)
 {
 	g_chatEnabled = enabled;
+	std::lock_guard<std::mutex> lock(g_iniMutex);
 	ini.LoadFile("Data\\F4SE\\Plugins\\FalloutChat.ini");
 	ini.SetBoolValue("General", "chat_enabled", enabled);
 	ini.SaveFile("Data\\F4SE\\Plugins\\FalloutChat.ini");
@@ -79,6 +83,7 @@ void SaveChatEnabled(bool enabled)
 
 void SaveTutorialSeen()
 {
+	std::lock_guard<std::mutex> lock(g_iniMutex);
 	ini.LoadFile("Data\\F4SE\\Plugins\\FalloutChat.ini");
 	ini.SetBoolValue("General", "tutorial_seen", true);
 	ini.SaveFile("Data\\F4SE\\Plugins\\FalloutChat.ini");
@@ -88,6 +93,7 @@ void SaveTutorialSeen()
 
 void SaveIntroDismissed()
 {
+	std::lock_guard<std::mutex> lock(g_iniMutex);
 	ini.LoadFile("Data\\F4SE\\Plugins\\FalloutChat.ini");
 	ini.SetBoolValue("General", "intro_dismissed", true);
 	ini.SaveFile("Data\\F4SE\\Plugins\\FalloutChat.ini");
@@ -98,6 +104,7 @@ void SaveIntroDismissed()
 void SaveFontSize(int size)
 {
 	g_fontSize = size;
+	std::lock_guard<std::mutex> lock(g_iniMutex);
 	ini.LoadFile("Data\\F4SE\\Plugins\\FalloutChat.ini");
 	ini.SetLongValue("General", "font_size", size);
 	ini.SaveFile("Data\\F4SE\\Plugins\\FalloutChat.ini");
@@ -107,6 +114,7 @@ void SaveFontSize(int size)
 void SaveOpacity(int opacity)
 {
 	g_bgOpacity = opacity;
+	std::lock_guard<std::mutex> lock(g_iniMutex);
 	ini.LoadFile("Data\\F4SE\\Plugins\\FalloutChat.ini");
 	ini.SetLongValue("General", "bg_opacity", opacity);
 	ini.SaveFile("Data\\F4SE\\Plugins\\FalloutChat.ini");
@@ -116,9 +124,11 @@ void SaveOpacity(int opacity)
 void LoadConfigs()
 {
 	logger::info("LoadConfigs: reading FalloutChat.ini");
+	std::lock_guard<std::mutex> lock(g_iniMutex);
 	ini.LoadFile("Data\\F4SE\\Plugins\\FalloutChat.ini");
 
-	serverUrl = ini.GetValue("General", "server_url", "wss://fallenworld.nexus/ws");
+	// Server URL is hardcoded — not user-configurable to prevent redirection attacks
+	serverUrl = "wss://chat.fallenworld.nexus/ws";
 	username = ini.GetValue("General", "username", "");
 
 	if (username.empty())
@@ -137,55 +147,27 @@ void LoadConfigs()
 		serverUrl, username, g_privacyAccepted, g_chatEnabled, g_tutorialSeen, g_introDismissed, g_fontSize, g_bgOpacity);
 }
 
-extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Query(const F4SE::QueryInterface * a_f4se, F4SE::PluginInfo * a_info)
+extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Query(const F4SE::QueryInterface* a_f4se, F4SE::PluginInfo* a_info)
 {
-#ifndef NDEBUG
-	auto sink = std::make_shared<spdlog::sinks::msvc_sink_mt>();
-#else
-	auto path = logger::log_directory();
-	if (!path) {
-		return false;
-	}
-
-	*path /= fmt::format(FMT_STRING("{}.log"), Version::PROJECT);
-	auto sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(path->string(), true);
-#endif
-
-	auto log = std::make_shared<spdlog::logger>("global log"s, std::move(sink));
-
-#ifndef NDEBUG
-	log->set_level(spdlog::level::trace);
-#else
-	log->set_level(spdlog::level::info);
-	log->flush_on(spdlog::level::warn);
-#endif
-
-	spdlog::set_default_logger(std::move(log));
-	spdlog::set_pattern("--> %v"s);
-
-	logger::info("{} v{}", Version::PROJECT, Version::NAME);
-
+	// OG F4SE calls this before Load; NG F4SE uses F4SEPlugin_Version instead.
+	// Keep minimal — no logging here (logger not yet initialized for OG path).
 	a_info->infoVersion = F4SE::PluginInfo::kVersion;
-	a_info->name = "FalloutChat";
-	a_info->version = Version::MAJOR;
+	a_info->name        = "FalloutChat";
+	a_info->version     = Version::MAJOR;
 
-	if (a_f4se->IsEditor()) {
-		logger::critical("loaded in editor");
+	if (a_f4se->IsEditor())
 		return false;
-	}
 
-	const auto ver = a_f4se->RuntimeVersion();
-	if (ver < F4SE::RUNTIME_1_10_162) {
-		logger::critical("unsupported runtime v{}", ver.string());
+	if (a_f4se->RuntimeVersion() < F4SE::RUNTIME_1_10_162)
 		return false;
-	}
 
 	return true;
 }
 
-extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface * a_f4se)
+extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f4se)
 {
-	F4SE::Init(a_f4se);
+	F4SE::Init(a_f4se, { .logName = "FalloutChat" });
+	logger::info("{} v{}", Version::PROJECT, Version::NAME);
 	LoadConfigs();
 
 	const F4SE::MessagingInterface* messageInterface = F4SE::GetMessagingInterface();

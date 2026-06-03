@@ -501,6 +501,14 @@
     return n.getHours().toString().padStart(2,'0') + ':' + n.getMinutes().toString().padStart(2,'0') + ':' + n.getSeconds().toString().padStart(2,'0');
   }
 
+  // ── Scroll wheel (Ultralight doesn't forward native overflow scroll) ─────────
+  document.getElementById('messagesList').addEventListener('wheel', function(e) {
+    e.preventDefault();
+    // deltaMode 0 = pixels, 1 = lines, 2 = pages
+    var px = e.deltaMode === 1 ? e.deltaY * 20 : e.deltaMode === 2 ? e.deltaY * this.clientHeight : e.deltaY;
+    this.scrollTop += px;
+  }, { passive: false });
+
   // ── Drag ──────────────────────────────────────────────────────────────────
   var dragging = false, dragOffX = 0, dragOffY = 0;
 
@@ -741,9 +749,12 @@
     console.log('toast: history loaded, live toasts enabled');
   };
 
-  // Strip long numeric Discord user IDs from display names (e.g. "[Discord] 123456789 nomad" → "[Discord] nomad")
+  // Replace known admin Discord ID with "[Admin]", then strip any other long numeric IDs.
   function toastDisplayName(sender) {
-    return String(sender).replace(/\b\d{15,20}\b\s*/g, '').trim();
+    return String(sender)
+      .replace(/1315627655638290533/g, '[Admin]')
+      .replace(/\b\d{15,20}\b\s*/g, '')
+      .trim();
   }
 
   // Returns true only if the message timestamp (HH:MM:SS) is within the last 2 minutes.
@@ -814,7 +825,6 @@
     var adminHtml = '<span style="color:#ff4444;font-weight:bold;">[Admin]</span>';
     s = s.replace(/&lt;@&amp;1315627655638290533&gt;/g, adminHtml);
     s = s.replace(/&lt;@1315627655638290533&gt;/g, adminHtml);
-    s = s.replace(/<@&?1315627655638290533>/g, adminHtml);
     s = s.replace(/1315627655638290533/g, adminHtml);
     return s;
   }
@@ -849,13 +859,14 @@
                       + '<span class="msg-sender">' + safeSender + ':</span> '
                       + '<span class="msg-text">' + safeText + '</span>';
       }
+      var atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
       list.appendChild(row);
 
       while (list.children.length > 200) {
         list.removeChild(list.firstChild);
       }
 
-      list.scrollTop = list.scrollHeight;
+      if (atBottom) list.scrollTop = list.scrollHeight;
 
       if (document.body.classList.contains('passive-mode') && !isSystem && isRecentMessage(timestamp)) {
         showToast(sender, text, isEmote, isMention);

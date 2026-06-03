@@ -14,27 +14,31 @@ namespace FalloutChat
 		return instance;
 	};
 
-	void ChatClient::ShutdownNoLock()
-	{
-		if (_webSocket) {
-			_webSocket->stop();
-			_webSocket.reset();
-			ix::uninitNetSystem();
-		}
-		_connected = false;
-	}
-
 	void ChatClient::Initialize(const std::string& url, const std::string& username, uint64_t steamID)
 	{
-		std::lock_guard<std::mutex> lock(_mutex);
-		if (_webSocket) {
-			logger::info("ChatClient: re-initializing, shutting down existing connection");
-			ShutdownNoLock();
+		// Capture the old websocket outside the lock so we can stop() it without holding _mutex.
+		// stop() blocks until the bg thread exits; that thread acquires _mutex inside the message
+		// handler, so stopping while holding the lock causes a deadlock.
+		std::unique_ptr<ix::WebSocket> oldSocket;
+		{
+			std::lock_guard<std::mutex> lock(_mutex);
+			if (_webSocket) {
+				logger::info("ChatClient: re-initializing, shutting down existing connection");
+				oldSocket = std::move(_webSocket);
+				_connected = false;
+			}
+			_url = url;
+			_username = username;
+			_steamID = steamID;
 		}
 
-		_url = url;
-		_username = username;
-		_steamID = steamID;
+		if (oldSocket) {
+			oldSocket->stop();
+			oldSocket.reset();
+			ix::uninitNetSystem();
+		}
+
+		std::lock_guard<std::mutex> lock(_mutex);
 
 		logger::info("ChatClient: initializing — url='{}' username='{}' steamID={}",
 			url, username, steamID);
@@ -74,39 +78,32 @@ namespace FalloutChat
 							std::string ts   = body.substr(0, pipePos);
 							std::string rest = body.substr(pipePos + 1);
 
-							// We removed the 30-minute cutoff so we can always show the last 20 messages
-							bool tooOld = false;
+							ChatMessage histMsg;
+							histMsg.timestamp = ts;
 
-							if (!tooOld) {
-								ChatMessage histMsg;
-								histMsg.timestamp = ts;
-
-								if (rest.rfind("[EMOTE]", 0) == 0) {
-									std::string emoteBody = rest.substr(7);
-									auto delim = emoteBody.find('\x01');
-									if (delim != std::string::npos) {
-										histMsg.sender = emoteBody.substr(0, delim);
-										histMsg.text   = emoteBody.substr(delim + 1);
-									} else {
-										histMsg.text = emoteBody;
-									}
-									histMsg.isEmote = true;
-									logger::info("ChatClient: history emote from '{}' at {}", histMsg.sender, ts);
+							if (rest.rfind("[EMOTE]", 0) == 0) {
+								std::string emoteBody = rest.substr(7);
+								auto delim = emoteBody.find('\x01');
+								if (delim != std::string::npos) {
+									histMsg.sender = emoteBody.substr(0, delim);
+									histMsg.text   = emoteBody.substr(delim + 1);
 								} else {
-									auto colonPos = rest.find(':');
-									if (colonPos != std::string::npos) {
-										histMsg.sender = rest.substr(0, colonPos);
-										histMsg.text   = rest.substr(colonPos + 1);
-										if (!histMsg.text.empty() && histMsg.text[0] == ' ')
-											histMsg.text = histMsg.text.substr(1);
-									} else {
-										histMsg.text = rest;
-									}
-									logger::info("ChatClient: history msg from '{}' at {}", histMsg.sender, ts);
+									histMsg.text = emoteBody;
 								}
-								_messageQueue.push_back(histMsg);
-								gotMessage = true;
+								histMsg.isEmote = true;
+								logger::info("ChatClient: history emote from '{}' at {}", histMsg.sender, ts);
+							} else {
+								auto colonPos = rest.find(": ");
+								if (colonPos != std::string::npos) {
+									histMsg.sender = rest.substr(0, colonPos);
+									histMsg.text   = rest.substr(colonPos + 2);
+								} else {
+									histMsg.text = rest;
+								}
+								logger::info("ChatClient: history msg from '{}' at {}", histMsg.sender, ts);
 							}
+							_messageQueue.push_back(histMsg);
+							gotMessage = true;
 						} else {
 							logger::warn("ChatClient: malformed HISTORY payload — no pipe separator");
 						}
@@ -125,12 +122,10 @@ namespace FalloutChat
 							chatMsg.isEmote = true;
 							logger::info("ChatClient: emote from '{}'", chatMsg.sender);
 						} else {
-							size_t colonPos = payload.find(':');
+							size_t colonPos = payload.find(": ");
 							if (colonPos != std::string::npos) {
 								chatMsg.sender = payload.substr(0, colonPos);
-								chatMsg.text   = payload.substr(colonPos + 1);
-								if (!chatMsg.text.empty() && chatMsg.text[0] == ' ')
-									chatMsg.text = chatMsg.text.substr(1);
+								chatMsg.text   = payload.substr(colonPos + 2);
 							} else {
 								chatMsg.sender = "Server";
 								chatMsg.text   = payload;
@@ -158,19 +153,30 @@ namespace FalloutChat
 						logger::error("ChatClient: F4SE task interface unavailable, message dropped");
 				}
 			} else if (msg->type == ix::WebSocketMessageType::Open) {
-				_connected = true;
-				logger::info("ChatClient: connected to {}", _url);
+				std::string connectedUrl;
+				{
+					std::lock_guard<std::mutex> lock(_mutex);
+					_connected = true;
+					connectedUrl = _url;
+				}
+				logger::info("ChatClient: connected to {}", connectedUrl);
 				if (auto* ti = F4SE::GetTaskInterface())
 					ti->AddTask([]() { ChatUI::UpdateConnectionStatus(true); });
 			} else if (msg->type == ix::WebSocketMessageType::Close) {
-				_connected = false;
-				_disconnectedAt = std::chrono::steady_clock::now();
+				{
+					std::lock_guard<std::mutex> lock(_mutex);
+					_connected = false;
+					_disconnectedAt = std::chrono::steady_clock::now();
+				}
 				logger::warn("ChatClient: disconnected (code={} reason='{}')", msg->closeInfo.code, msg->closeInfo.reason);
 				if (auto* ti = F4SE::GetTaskInterface())
 					ti->AddTask([]() { ChatUI::UpdateConnectionStatus(false); });
 			} else if (msg->type == ix::WebSocketMessageType::Error) {
-				_connected = false;
-				_disconnectedAt = std::chrono::steady_clock::now();
+				{
+					std::lock_guard<std::mutex> lock(_mutex);
+					_connected = false;
+					_disconnectedAt = std::chrono::steady_clock::now();
+				}
 				logger::error("ChatClient: websocket error — {}", msg->errorInfo.reason);
 				if (auto* ti = F4SE::GetTaskInterface())
 					ti->AddTask([]() { ChatUI::UpdateConnectionStatus(false); });
@@ -183,8 +189,19 @@ namespace FalloutChat
 
 	void ChatClient::Shutdown()
 	{
-		std::lock_guard<std::mutex> lock(_mutex);
-		ShutdownNoLock();
+		std::unique_ptr<ix::WebSocket> oldSocket;
+		{
+			std::lock_guard<std::mutex> lock(_mutex);
+			if (_webSocket) {
+				oldSocket = std::move(_webSocket);
+				_connected = false;
+			}
+		}
+		if (oldSocket) {
+			oldSocket->stop();
+			oldSocket.reset();
+			ix::uninitNetSystem();
+		}
 	}
 
 	void ChatClient::SendRename(const std::string& name)
@@ -249,11 +266,5 @@ namespace FalloutChat
 	{
 		std::lock_guard<std::mutex> lock(_mutex);
 		return _onlineCount;
-	}
-
-	std::chrono::steady_clock::time_point ChatClient::GetDisconnectTime() const
-	{
-		std::lock_guard<std::mutex> lock(_mutex);
-		return _disconnectedAt;
 	}
 }

@@ -3,9 +3,12 @@
 const PORT           = parseInt(process.env.PORT           || '3000', 10);
 const MAX_HISTORY    = parseInt(process.env.MAX_HISTORY    || '50',   10);
 const MAX_CLIENTS    = parseInt(process.env.MAX_CLIENTS    || '200',  10);
-const MAX_MSG_LEN    = 600;   // hard cap on raw incoming message bytes
+const MAX_MSG_LEN    = 600;
 const MAX_USERNAME_LEN = 32;
-const RATE_LIMIT_MS  = 500;   // minimum ms between messages per client
+const RATE_LIMIT_MS  = 500;
+const BOT_SECRET     = process.env.BOT_SECRET || '';
+
+const trustedClients = new WeakSet(); // authenticated bot connections
 
 // { ts: 'HH:MM:SS', raw: '<broadcast string>' }
 const history = [];
@@ -78,14 +81,21 @@ Bun.serve({
     },
 
     message(ws, data) {
+      // 0. Bot authentication — check before length/rate limits
+      if (BOT_SECRET && String(data) === `[BOT_AUTH]${BOT_SECRET}`) {
+        trustedClients.add(ws);
+        console.log('[bot] authenticated');
+        return;
+      }
+
       // 1. Length cap
       if (data.length > MAX_MSG_LEN) {
         console.warn(`[drop] oversized message (${data.length} bytes)`);
         return;
       }
 
-      // 2. Rate limit
-      if (isRateLimited(ws)) {
+      // 2. Rate limit (trusted bot connections are exempt)
+      if (!trustedClients.has(ws) && isRateLimited(ws)) {
         console.warn('[drop] rate limited');
         return;
       }
@@ -98,8 +108,8 @@ Bun.serve({
         return;
       }
 
-      // 4. Reject raw [EMOTE] from clients — only the server builds these
-      if (msg.startsWith('[EMOTE]')) {
+      // 4. Reject raw [EMOTE] from untrusted clients — only server builds these
+      if (!trustedClients.has(ws) && msg.startsWith('[EMOTE]')) {
         console.warn('[drop] client tried to inject [EMOTE] directly');
         return;
       }
@@ -115,13 +125,18 @@ Bun.serve({
       const text   = sanitize(msg.slice(ci + 2));
       if (!text || text.length > 500) return;
 
-      const parts    = prefix.split('|');
-      const steamId  = sanitize(parts[0] ?? '0');
-      const rawName  = sanitize(parts[1] ?? 'Player').slice(0, MAX_USERNAME_LEN);
+      const parts   = prefix.split('|');
+      const steamId = sanitize(parts[0] ?? '0');
+      const rawName = sanitize(parts[1] ?? 'Player').slice(0, MAX_USERNAME_LEN);
 
-      // Strip any spoofed system prefix from username
-      const username = stripSpoofedPrefixes(rawName) || 'Player';
-      const display  = steamId === '0' ? `[Web] ${username}` : username;
+      // Trusted bot: keep username as-is (preserves [Discord] prefix)
+      // Untrusted:   strip any spoofed system prefixes
+      const username = trustedClients.has(ws)
+        ? rawName
+        : (stripSpoofedPrefixes(rawName) || 'Player');
+      const display = trustedClients.has(ws)
+        ? username
+        : (steamId === '0' ? `[Web] ${username}` : username);
 
       let formatted;
       if (text.startsWith('/me ')) {

@@ -47,5 +47,8 @@ CLAUDE.md
 # JetBrains IDE
 .idea/
 
+# Environment secrets — never commit
+.env
+
 # Backup files
 *.bak

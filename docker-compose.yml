@@ -7,3 +7,15 @@ services:
     environment:
       - PORT=3000
       - MAX_HISTORY=50
+      - BOT_SECRET=${BOT_SECRET}
+
+  discord-bot:
+    build: ./discord-bot
+    restart: unless-stopped
+    depends_on:
+      - chat-server
+    environment:
+      - DISCORD_TOKEN=${DISCORD_TOKEN}
+      - DISCORD_CHANNEL_ID=${DISCORD_CHANNEL_ID}
+      - WS_URL=ws://chat-server:3000
+      - BOT_SECRET=${BOT_SECRET}

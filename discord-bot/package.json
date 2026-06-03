@@ -1,0 +1,11 @@
+{
+  "name": "falloutchat-discord-bot",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "bun index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.19.0"
+  }
+}
